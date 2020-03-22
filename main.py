@@ -23,7 +23,7 @@ heartdf=collect_heart(yesterday2,client)
 sleepdf=collect_sleep(today2,client)
 activitydf=collect_activity(yesterday2,client)
 calendardf=collect_calendar(yesterday3,today3)
-locdf=collect_location("sites/tracker/data/MAR2020LOC.json)
+locdf=collect_location("sites/tracker/data/MAR2020LOC.json")
 
 #saving data in csv
 heartdf.to_csv('data/heart.csv',mode='a', header=True, index=False)

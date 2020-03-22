@@ -85,8 +85,8 @@ tograph<-function(fig,data,colour,level){
       type="scatter",
       mode = "lines",
       line = list(color = colour, width = 100),
-      showlegend = F, 
-      text = paste("Event: ", data$event[i], "<br>") )
+      showlegend = T, 
+      name = paste( data$event[i], "<br>") )
   }
   return(fig)
 }
