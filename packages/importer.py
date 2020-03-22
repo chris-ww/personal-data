@@ -9,11 +9,16 @@ from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 import json
-
-# If modifying these scopes, delete the file token.pickle.
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 
+
+
 def fitbit_client(id,secret):
+    #Accepts id, secret credentials
+    #uses id, secret to log into fitbit client
+    #retrieves access token,refresh token
+    #returns client
+
     server = Oauth2.OAuth2Server(id, secret)
     server.browser_authorize()
     accesstoken = str(server.fitbit.client.session.token['access_token'])
@@ -22,6 +27,9 @@ def fitbit_client(id,secret):
     return client
     
 def collect_heart(date,client):
+    #Accepts date to access, fitbit client
+    #returns time and heart rate from day requested in pandas dataframe
+
     time_list = []
     val_list = []
     heart = client.intraday_time_series('activities/heart', base_date=date, detail_level='1min')
@@ -32,7 +40,10 @@ def collect_heart(date,client):
     return heartdf
     
 
-def collect_sleep(date,client):           
+def collect_sleep(date,client):      
+    #Accepts date to access, fitbit client
+    #returns summary sleep data from day requested in pandas dataframe
+     
     sleep = client.sleep(date=date)['sleep'][0]
     sleepdf = pd.DataFrame({'Date':sleep['dateOfSleep'],
                'MainSleep':sleep['isMainSleep'],
@@ -48,8 +59,10 @@ def collect_sleep(date,client):
     return sleepdf
 
 def collect_activity(date,client):
-    activity = client.activities(date=date)['summary']
+    #Accepts date to access, fitbit client
+    #returns summary activity from day requested in pandas dataframe
 
+    activity = client.activities(date=date)['summary']
     activitydf = pd.DataFrame({'Date':date,
                'Activity Calories':activity['activityCalories'],
                'Calories Out':activity['caloriesOut'],
@@ -62,11 +75,12 @@ def collect_activity(date,client):
     return activitydf
     
 def collect_calendar(date1,date2):
+    #Accepts start date, end date
+    #Uses code google https://developers.google.com/calendar/quickstart/python to login to api
+    #uses and stores credentials as token on computer
+    #returns list of calendar events in pandas dataframe
 
     creds = None
-    # The file token.pickle stores the user's access and refresh tokens, and is
-    # created automatically when the authorization flow completes for the first
-    # time.
     if os.path.exists('token.pickle'):
         with open('token.pickle', 'rb') as token:
             creds = pickle.load(token)
@@ -89,6 +103,8 @@ def collect_calendar(date1,date2):
                                         maxResults=100, singleEvents=True,
                                         orderBy='startTime').execute()
     events = events_result.get('items', [])
+    
+    #returns list of calendar events in pandas dataframe
     start_list = []
     end_list = []
     name_list=[]
@@ -105,6 +121,10 @@ def collect_calendar(date1,date2):
     return eventdf
 
 def collect_location(file):
+    #Accepts file name
+    #Opens Json file and extracts locations,activities and times
+    #returns pandas dataframe
+  
     with open(file) as f:
         data = json.load(f)
         event_list = []
