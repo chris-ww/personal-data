@@ -3,111 +3,135 @@ library(tidyr)
 library(dplyr)
 library(DiagrammeR)
 library(plotly)
+library(shiny)
+library(ProjectTemplate)
+library(DBI)
+library(RSQLite)
+library(d3Dashboard)
+library("shinyWidgets")
+source("bullet_graph.R")
+#code for bullet graph https://github.com/mtorchiano/MTkR, mine is slightly modified
+library(ggplot2)
 
-#collects data from csv files
-sleepdf=read.csv('data/sleep.csv',header=TRUE)
-heartdf=read.csv('data/heart.csv',header=TRUE)
-eventdf=read.csv('data/calendar.csv',header=TRUE)
-locdf=read.csv('data/location.csv',header=TRUE)
-loctype=read.csv('data/location_types.csv',header=TRUE,fileEncoding="UTF-8-BOM")
+##################Connecting to History Database#######################
+conn <- dbConnect(RSQLite::SQLite(), "personal_data.db")
+  activitydf=dbReadTable(conn, "activity")
+  sleepdf=dbReadTable(conn, "sleep")
+  fooddf=dbReadTable(conn, "food")
+  bodydf=dbReadTable(conn, "body")
+  rescuedf=dbReadTable(conn, "rescue")
+dbDisconnect(conn)
 
-#converts dates to consistent format
+#standardising dates
 sleepdf$start=as.POSIXct(sleepdf$start, format = "%Y-%m-%dT%H:%M:%S")
 sleepdf$end=as.POSIXct(sleepdf$end, format = "%Y-%m-%dT%H:%M:%S")
-eventdf$start=as.POSIXct(eventdf$start, format = "%Y-%m-%dT%H:%M:%S")
-eventdf$end=as.POSIXct(eventdf$end, format = "%Y-%m-%dT%H:%M:%S")
-locdf$start=as.POSIXct(locdf$start/1000, origin="1970-01-01", tz='EST')
-locdf$end=as.POSIXct(locdf$end/1000, origin="1970-01-01", tz='EST')
-
-#Labels locations by type
-#example  loaction x-home
-#         location y-work
-#         labels based on data/location_types.csv
-locdf$location2 <- loctype$location[match(locdf$location, loctype$value)]
-locdf$event <- loctype$event[match(locdf$location, loctype$value)]
 
 
-
-#records periods of high heart rate as exercise events
-#fills in gaps if less then or eqaul to 5 minutes
-#records as dataframe activitydf
-workout_start =numeric(10)
-workout_end = numeric(10)
-heartdf$Heart.Rate=as.numeric(heartdf$Heart.Rate)
-active=FALSE
-count=0
-workout_n=1
-for(i in 1:(nrow(heartdf))){
-  if(heartdf$Heart.Rate[i]>100){
-    count=5
-    if(active==FALSE){
-      workout_start[workout_n]=i
-      active=TRUE
-    }
-  }
-  else{
-    count=count-1
-    if(active==TRUE){
-      if(count<1){
-        workout_end[workout_n]=i
-        workout_n=workout_n+1
-        active=FALSE
-      }
-    }
-  }
+##################Connecting to daily Databases#######################
+update_fitbit=function(){
+  system2("wsl", "python3 trigger_import.py")
+  conn <- dbConnect(RSQLite::SQLite(), "personal_data_trigger.db")
+    activitydf2=dbReadTable(conn, "activty")
+    sleepdf2=dbReadTable(conn, "sleep")
+    fooddf2=dbReadTable(conn, "meals")
+    rescuedf2=dbReadTable(conn, "rescue")
+  dbDisconnect(conn)
+  daily=list(sleepdf2,activitydf2,fooddf2,rescuedf2)
+  daily
 }
-activitydf<-data.frame(as.POSIXct(paste(heartdf$Date[workout_start],heartdf$Time[workout_start]), format="%Y-%m-%d %H:%M:%S"),
-                       as.POSIXct(paste(heartdf$Date[workout_end],heartdf$Time[workout_end]), format="%Y-%m-%d %H:%M:%S"),
-                       "workout")
 
-names(activitydf)=c("start","end","group")
+daily=update_fitbit()
+sleep_day=daily[[1]]
+activity_day=daily[[2]]
+food_day=daily[[3]]
+rescue_day=daily[[4]]
+
+#standardising dates
+sleep_day$start=as.POSIXct(daily[[1]]$start, format = "%Y-%m-%dT%H:%M:%S")
+sleep_day$end=as.POSIXct(daily[[1]]$end, format = "%Y-%m-%dT%H:%M:%S")
+
+#If no meals set calories etc to 0 instead of NA
+food_day[1,][is.na(daily[[3]][1,])]=0
 
 
-#labels events of activity as exercise and sleep as sleep
-activitydf$event="exercise"
-sleepdf$event="sleep"
 
-#create figure
-fig <- plot_ly()
 
-tograph<-function(fig,data,colour,level){
-  #accepts figure, dataset, colour and level
-  #adds box for each event in data
-  #start and end are when box starts/ends
-  #colour can be set, or custom where it gives events different colour
-  #level is height
-  #returns figure
+###########Plotting ##############################################
+
+check_metrics=function(sleep_day,food_day,activity_day,rescue_day){
+  #Creating variables for readability
+  unproductive=sum(rescue_day[rescue_day[,6]<0,2])/60
+  productive=sum(rescue_day[rescue_day[,6]>0,2])/60
+  activity=(sum(activity_day[,c(6,7)])+activity_day[[2]][,8]/5)/60
+  avg_cal=mean(tail(activitydf$Calories.Out,5))
+  cal_in=food_day[1,3]
+  protein=food_day[1,4]
+  sleep=sleep_day[1,5]/60
+  restless=sleep_day[1,9]/60
+  daily_score=productive-unproductive+activity+protein/100+sleep/10-restless
   
-  for(i in 1:(nrow(data) )){
-    fig = add_trace(fig,
-      x = c(data$start[i], data$end[i]),  
-      y = c(level, level),
-      type="scatter",
-      mode = "lines",
-      line = list(color = colour, width = 100),
-      showlegend = T, 
-      name = paste( data$event[i], "<br>") )
-  }
-  return(fig)
+  today=as.POSIXct(format(Sys.Date(),format="%Y-%m-%d"),format="%Y-%m-%d")
+  hour=as.numeric(difftime(Sys.time(),today,units="hours"))
+  
+  #percent of Day/Awake day passed
+  pd=min(((hour-9)/14),1)
+  pw=min(((hour-9)/8),1)
+  
+  #bullet graphs
+  par(mfrow=c(8,1),mar=c(1,8,1,1),oma = c(1, 0, 2, 0))
+  bulletgraph(x=daily_score,limits=c(0,6,8,max(10,daily_score)),ref=8*pw, name="score")
+  bulletgraph(x=sleep,limits=c(min(6,sleep),7,7.75,max(9,sleep)),ref=7.75, name="sleep",subname="hours")
+  bulletgraph(x=restless,limits=c(0,.333,.75,max(1.33,restless)),ref=.333, name="restless",rev=T,subname="hours")
+  bulletgraph(x=cal_in,limits=c(min(0,cal_in-1),avg_cal-300,avg_cal-150,avg_cal+150,avg_cal+300,max(avg_cal+500,cal_in+100)),ref=avg_cal*pd, name="Calories",rev=T)
+  bulletgraph(x=protein,limits=c(min(0,protein),140,170,max(200,protein)),ref=170*pd, name="protein",subname="grams")
+  bulletgraph(x=activity,limits=c(min(0,activity),1,1.5,max(2,activity)),ref=1.5*pw, name="activity", subname="hours")
+  bulletgraph(x=productive,limits=c(0,2,3,4,max(5,productive)),ref=4*pw, name="productive",subname="hours")
+  bulletgraph(x=unproductive,limits=c(0,0.5,1,max(1.5,unproductive)),ref=0.5*pw, name="unproductive",subname="hours")
 }
 
-#creating dataframe for driving and loactions that aren't "home"
-drivingdf=locdf[locdf$event=="driving",]
-otherdf=locdf[!locdf$event=="driving"&!locdf$location2=="home",]
+#Categorising rescuetime productivity data 1,2 =productive,-1,-2 =unproductive
+rescue_histdf=rescuedf
+rescue_histdf$productive[rescue_histdf$productive>0]="productive"
+rescue_histdf$productive[rescue_histdf$productive<0]="unproductive"
+rescue_histdf=rescue_histdf[!rescue_histdf$productive==0,]
 
-#adding data to the figure
-fig=tograph(fig,sleepdf,"blue",0)
-fig=tograph(fig,activitydf,"orange",1)
-fig=tograph(fig,eventdf,"red",4)
-fig=tograph(fig,drivingdf,"purple",2)
-fig=tograph(fig,otherdf,"green",3)
+#Getting sums of productive and unproductive activities per day
+rescue_histdf<-rescue_histdf %>%
+  group_by(date,productive) %>%
+  summarise(duration=sum(duration))
 
-#adding other figure parameters
-fig=fig %>% layout(title="Schedule March 20, 2020",margin=list(t=50),xaxis=list(range=c("2020-03-20","2020-03-21"),type="date"), 
-                    yaxis = list(showgrid = F,tickmode = "array", tickvals = c(0,1,2,3,4), 
-                                 ticktext = c("Sleep","exercise","drive","other","event"),tickfont=list(size=15)))
-#print figure
-fig
+#Plotting rescuetime, sleep, activity and weight history
+ggplot(rescue_histdf)+
+  geom_line(aes(x=as.Date(date),y=duration/60,lty=productive))+
+  xlab("date")+
+  ylab("duration(minutes)")+
+  ylim(0,NA)
 
-#save figure
-htmlwidgets::saveWidget(as_widget(fig), "figure.html")
+ggplot(sleepdf)+
+  geom_line(aes(x=as.Date(date),y=minutes.asleep/60,lty="Sleep"))+
+  geom_line(aes(x=as.Date(date),y=restless.duration/60,lty="restless.duration"))+
+  xlab("date")+
+  ylab("duration (hours)")+
+  ylim(0,NA)
+
+
+ggplot(activitydf)+
+  geom_line(aes(x=as.Date(Date),y=very.active.minutes,lty="Very active"))+
+  geom_line(aes(x=as.Date(Date),y=fairly.active.minutes,lty="Fairly active"))+
+  geom_line(aes(x=as.Date(Date),y=lightly.active.minutes,lty="Lightly active"))+
+  xlab("date")+
+  ylab("duration (minutes)")+
+  ylim(0,NA)
+
+bodydf=bodydf[bodydf$weight>0,]
+ggplot(bodydf)+
+  geom_line(aes(x=as.Date(date),y=weight))+
+  xlab("date")+
+  ylab("weight (lbs)")+
+  ylim(0,190)
+
+
+#Linear models to find relationship between sleep and activity level of the previous day
+summary(lm(sleepdf$minutes.asleep[-1]~activitydf$fairly.active.minutes[-110]))
+summary(lm(sleepdf$restless.duration[-1]~activitydf$fairly.active.minutes[-110]))
+        
