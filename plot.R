@@ -1,8 +1,7 @@
 library(blogdown)
-library(tidyr)
+library(tidy)
 library(dplyr)
 library(DiagrammeR)
-library(plotly)
 library(shiny)
 library(ProjectTemplate)
 library(DBI)
@@ -131,7 +130,3 @@ ggplot(bodydf)+
   ylim(0,190)
 
 
-#Linear models to find relationship between sleep and activity level of the previous day
-summary(lm(sleepdf$minutes.asleep[-1]~activitydf$fairly.active.minutes[-110]))
-summary(lm(sleepdf$restless.duration[-1]~activitydf$fairly.active.minutes[-110]))
-        
